@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+# Code directory.
+export PROJECT_DIR=/home/michael/baller2vec
+export DATA_DIR=/mnt/raid/michael/baller2vec_data
+export EVENTS_DIR=${DATA_DIR}/events
+export TRACKING_DIR=${DATA_DIR}/NBA-Player-Movements/data/2016.NBA.Raw.SportVU.Game.Logs
+export GAMES_DIR=${DATA_DIR}/games
+export EXPERIMENTS_DIR=${DATA_DIR}/experiments

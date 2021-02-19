@@ -1,0 +1,10 @@
+pandas
+seaborn
+numpy
+umap_learn
+matplotlib
+py7zr
+torch
+Pillow
+PyYAML
+scikit_learn
