@@ -10,7 +10,7 @@ This is the repository for the paper:
 
 | <img src="player_embeddings.png" width="800"> |
 |:--:|
-| By exlcusively learning to predict the trajectory of the ball, <code>baller2vec</code> was able to infer idiosyncratic player attributes. |
+| By exclusively learning to predict the trajectory of the ball, <code>baller2vec</code> was able to infer idiosyncratic player attributes. |
 
 | <img src="similar_players.jpg" width="400"> |
 |:--:|
