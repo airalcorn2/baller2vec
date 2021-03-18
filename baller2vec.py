@@ -1,4 +1,4 @@
-# Adapted from: https://pytorch.org/tutorials/beginner/transformer_tutorial.html
+# Adapted from: https://pytorch.org/tutorials/beginner/transformer_tutorial.html.
 
 import math
 import torch
@@ -14,7 +14,7 @@ class TimeEncoder(nn.Module):
         nn.init.normal_(self.time_embeddings)
 
     def forward(self, x, repeat):
-        repeated = self.time_embeddings.repeat(repeat, 1)
+        repeated = self.time_embeddings.repeat_interleave(repeat, 0)
         x = x + repeated
         return self.dropout(x)
 
