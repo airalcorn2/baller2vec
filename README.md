@@ -4,9 +4,9 @@ This is the repository for the paper:
 
 >[Michael A. Alcorn](https://sites.google.com/view/michaelaalcorn) and [Anh Nguyen](http://anhnguyen.me). [`baller2vec`: A Multi-Entity Transformer For Multi-Agent Spatiotemporal Modeling](https://arxiv.org/abs/2102.03291). arXiv. 2021.
 
-| <img src="model_and_mask.svg"> |
+| <img src="baller2vec.svg"> |
 |:--:|
-| **Left**: the input for <code>baller2vec</code> at each time step *t* is an *unordered* set of feature vectors containing information about the identities and locations of NBA players on the court. **Right**: <code>baller2vec</code> generalizes the standard Transformer to the multi-entity setting by employing a novel self-attention mask *tensor*. The mask is then reshaped into a matrix for compatibility with typical Transformer implementations. |
+| The input for <code>baller2vec</code> at each time step *t* is an *unordered* set of feature vectors containing information about the identities and locations of NBA players on the court, along with the ball. The model uses these inputs to classify either the binned trajectory for each player (**left**) or the ball (**right**). |
 
 | <img src="player_embeddings.png" width="800"> |
 |:--:|
@@ -31,9 +31,9 @@ If you use this code for your own research, please cite:
 
 ```
 @article{alcorn2021baller2vec,
-   title={baller2vec: A Multi-Entity Transformer For Multi-Agent Spatiotemporal Modeling},
+   title={\texttt{baller2vec}: A Multi-Entity Transformer For Multi-Agent Spatiotemporal Modeling},
    author={Alcorn, Michael A. and Nguyen, Anh},
-   journal={arXiv preprint arXiv:1609.03675},
+   journal={arXiv preprint arXiv:2102.03291},
    year={2021}
 }
 ```
@@ -193,20 +193,16 @@ echo "  train_samples_per_epoch: 20000" >> ${JOB}.yaml
 echo "  valid_samples: 1000" >> ${JOB}.yaml
 echo "  workers: 10" >> ${JOB}.yaml
 echo "  learning_rate: 1.0e-5" >> ${JOB}.yaml
+echo "  patience: 20" >> ${JOB}.yaml
 if [[ ("$task" = "event") || ("$task" = "score") ]]
 then
-    prev_model=False
-    echo "  prev_model: ${prev_model}" >> ${JOB}.yaml
-    if [[ "$prev_model" != "False" ]]
-    then
-        echo "  patience: 5" >> ${JOB}.yaml
-    fi
+    echo "  prev_model: False" >> ${JOB}.yaml
 fi
 
 # Dataset options.
 echo "dataset:" >> ${JOB}.yaml
 echo "  hz: 5" >> ${JOB}.yaml
-echo "  secs: 4" >> ${JOB}.yaml
+echo "  secs: 4.2" >> ${JOB}.yaml
 echo "  player_traj_n: 11" >> ${JOB}.yaml
 echo "  max_player_move: 4.5" >> ${JOB}.yaml
 echo "  ball_traj_n: 19" >> ${JOB}.yaml
@@ -227,6 +223,7 @@ echo "  nhead: 8" >> ${JOB}.yaml
 echo "  dim_feedforward: 2048" >> ${JOB}.yaml
 echo "  num_layers: 6" >> ${JOB}.yaml
 echo "  dropout: 0.0" >> ${JOB}.yaml
+
 if [[ "$task" != "seq2seq" ]]
 then
     echo "  use_cls: False" >> ${JOB}.yaml

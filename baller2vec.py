@@ -6,19 +6,6 @@ import torch
 from torch import nn
 
 
-class TimeEncoder(nn.Module):
-    def __init__(self, seq_len, d_model, dropout):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        self.time_embeddings = nn.Parameter(torch.Tensor(seq_len, d_model))
-        nn.init.normal_(self.time_embeddings)
-
-    def forward(self, x, repeat):
-        repeated = self.time_embeddings.repeat_interleave(repeat, 0)
-        x = x + repeated
-        return self.dropout(x)
-
-
 class Baller2Vec(nn.Module):
     def __init__(
         self,
@@ -78,15 +65,9 @@ class Baller2Vec(nn.Module):
         self.player_mlp = player_mlp
         self.ball_mlp = ball_mlp
 
-        # Initialize time encoders.
+        # Initialize Transformer.
         d_model = mlp_layers[-1]
         self.d_model = d_model
-        self.player_time_encoder = TimeEncoder(seq_len, d_model, dropout)
-        self.ball_time_encoder = TimeEncoder(seq_len, d_model, dropout)
-        if use_cls:
-            self.cls_time_encoder = TimeEncoder(seq_len, d_model, dropout)
-
-        # Initialize Transformer.
         encoder_layer = nn.TransformerEncoderLayer(
             d_model, nhead, dim_feedforward, dropout
         )
@@ -107,9 +88,9 @@ class Baller2Vec(nn.Module):
             self.event_classifier.bias.data.zero_()
 
         # Initialize mask.
-        self.register_buffer("mask", self.generate_square_subsequent_mask())
+        self.register_buffer("mask", self.generate_self_attn_mask())
 
-    def generate_square_subsequent_mask(self):
+    def generate_self_attn_mask(self):
         # n players plus the ball and the CLS entity (if used).
         if self.use_cls:
             sz = (self.n_players + 2) * self.seq_len
@@ -154,7 +135,7 @@ class Baller2Vec(nn.Module):
     def forward(self, tensors):
         device = list(self.player_mlp.parameters())[0].device
 
-        # Get player position/time features.
+        # Get player features.
         player_embeddings = self.player_embedding(
             tensors["player_idxs"].flatten().to(device)
         )
@@ -178,7 +159,7 @@ class Baller2Vec(nn.Module):
                 ],
                 dim=1,
             )
-            player_pos_feats = self.player_mlp(player_pos) * math.sqrt(self.d_model)
+            player_feats = self.player_mlp(player_pos) * math.sqrt(self.d_model)
         else:
             player_pos = torch.cat(
                 [
@@ -188,14 +169,10 @@ class Baller2Vec(nn.Module):
                 ],
                 dim=1,
             )
-            player_pos_feats = self.player_mlp(player_pos) * math.sqrt(self.d_model)
-            player_pos_feats = torch.cat([player_embeddings, player_pos_feats], dim=1)
+            pos_feats = self.player_mlp(player_pos) * math.sqrt(self.d_model)
+            player_feats = torch.cat([player_embeddings, pos_feats], dim=1)
 
-        player_pos_time_feats = self.player_time_encoder(
-            player_pos_feats, self.n_players
-        )
-
-        # Get ball position/time features.
+        # Get ball features.
         ball_embeddings = self.ball_embedding.repeat(self.seq_len, 1)
         ball_xs = tensors["ball_xs"].unsqueeze(1).to(device)
         ball_ys = tensors["ball_ys"].unsqueeze(1).to(device)
@@ -210,7 +187,7 @@ class Baller2Vec(nn.Module):
                 ],
                 dim=1,
             )
-            ball_pos_feats = self.ball_mlp(ball_pos) * math.sqrt(self.d_model)
+            ball_feats = self.ball_mlp(ball_pos) * math.sqrt(self.d_model)
         else:
             ball_pos = torch.cat(
                 [
@@ -220,23 +197,21 @@ class Baller2Vec(nn.Module):
                 ],
                 dim=1,
             )
-            ball_pos_feats = self.player_mlp(ball_pos) * math.sqrt(self.d_model)
-            ball_pos_feats = torch.cat([ball_embeddings, ball_pos_feats], dim=1)
-
-        ball_pos_time_feats = self.ball_time_encoder(ball_pos_feats, 1)
+            pos_feats = self.player_mlp(ball_pos) * math.sqrt(self.d_model)
+            ball_feats = torch.cat([ball_embeddings, pos_feats], dim=1)
 
         # Combine players and ball features.
-        combined = torch.cat([player_pos_time_feats, ball_pos_time_feats], dim=0)
+        combined = torch.cat([player_feats, ball_feats], dim=0)
 
         if self.use_cls:
-            # Get CLS time features.
+            # Get CLS features.
             cls_feats = self.cls_embedding.repeat(self.seq_len, 1)
-            cls_time_feats = self.cls_time_encoder(cls_feats, 1)
 
             # Combine with CLS features.
-            combined = torch.cat([combined, cls_time_feats], dim=0)
+            combined = torch.cat([combined, cls_feats], dim=0)
 
         output = self.transformer(combined.unsqueeze(1), self.mask)
+
         preds = {
             "player": self.player_classifier(output).squeeze(1),
             "ball": self.ball_classifier(output).squeeze(1),
@@ -294,10 +269,6 @@ class Baller2VecSeq2Seq(nn.Module):
 
                 in_feats = out_feats
 
-            # Initialize time encoders.
-            player_time_encoder = TimeEncoder(seq_len, d_model, dropout)
-            ball_time_encoder = TimeEncoder(seq_len, d_model, dropout)
-
             # Initialize Transformer.
             if enc_dec == "enc":
                 encoder_layer = nn.TransformerEncoderLayer(
@@ -314,8 +285,6 @@ class Baller2VecSeq2Seq(nn.Module):
                 {
                     "player_mlp": player_mlp,
                     "ball_mlp": ball_mlp,
-                    "player_time_encoder": player_time_encoder,
-                    "ball_time_encoder": ball_time_encoder,
                     "transformer": transformer,
                 }
             )
@@ -328,9 +297,9 @@ class Baller2VecSeq2Seq(nn.Module):
         self.player_classifier.bias.data.zero_()
 
         # Initialize mask.
-        self.register_buffer("mask", self.generate_square_subsequent_mask())
+        self.register_buffer("mask", self.generate_self_attn_mask())
 
-    def generate_square_subsequent_mask(self):
+    def generate_self_attn_mask(self):
         # Five players plus the ball.
         sz = 6 * self.seq_len
         mask = torch.zeros(sz, sz)
@@ -359,7 +328,7 @@ class Baller2VecSeq2Seq(nn.Module):
         for enc_dec in ["enc", "dec"]:
             (start, stop) = start_stops[enc_dec]
 
-            # Get player position/time features.
+            # Get player position features.
             player_embeddings = self.player_embedding(
                 tensors["player_idxs"][:, start:stop].flatten().to(device)
             )
@@ -389,14 +358,11 @@ class Baller2VecSeq2Seq(nn.Module):
                 ],
                 dim=1,
             )
-            player_pos_feats = self.model[enc_dec]["player_mlp"](
-                player_pos
-            ) * math.sqrt(self.d_model)
-            player_pos_time_feats = self.model[enc_dec]["player_time_encoder"](
-                player_pos_feats, 5
+            player_feats = self.model[enc_dec]["player_mlp"](player_pos) * math.sqrt(
+                self.d_model
             )
 
-            # Get ball position/time features.
+            # Get ball position features.
             ball_embeddings = self.ball_embedding.repeat(self.seq_len, 1)
             ball_xs = tensors["ball_xs"].unsqueeze(1).to(device)
             ball_ys = tensors["ball_ys"].unsqueeze(1).to(device)
@@ -410,17 +376,12 @@ class Baller2VecSeq2Seq(nn.Module):
                 ],
                 dim=1,
             )
-            ball_pos_feats = self.model[enc_dec]["ball_mlp"](ball_pos) * math.sqrt(
+            ball_feats = self.model[enc_dec]["ball_mlp"](ball_pos) * math.sqrt(
                 self.d_model
-            )
-            ball_pos_time_feats = self.model[enc_dec]["ball_time_encoder"](
-                ball_pos_feats, 1
             )
 
             # Combine players and ball features.
-            combined = torch.cat(
-                [player_pos_time_feats, ball_pos_time_feats], dim=0
-            ).unsqueeze(1)
+            combined = torch.cat([player_feats, ball_feats], dim=0).unsqueeze(1)
 
             if enc_dec == "enc":
                 output = self.model[enc_dec]["transformer"](combined)

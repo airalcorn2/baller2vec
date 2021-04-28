@@ -2,6 +2,7 @@ import numpy as np
 import pickle
 import random
 import sys
+import time
 import torch
 import yaml
 
@@ -10,6 +11,10 @@ from baller2vec_dataset import Baller2VecDataset
 from settings import *
 from torch import nn, optim
 from torch.utils.data import DataLoader
+
+SEED = 2010
+torch.manual_seed(SEED)
+torch.set_printoptions(linewidth=160)
 
 
 def worker_init_fn(worker_id):
@@ -20,14 +25,47 @@ def worker_init_fn(worker_id):
     np.random.seed(int(torch.utils.data.get_worker_info().seed) % (2 ** 32 - 1))
 
 
-def init_datasets(opts):
-    gameids = list(set([np_f.split("_")[0] for np_f in os.listdir(GAMES_DIR)]))
-    gameids.sort()
-    np.random.seed(2010)
-    np.random.shuffle(gameids)
-    n_train_valid = int(opts["train"]["train_valid_prop"] * len(gameids))
-    train_valid_gameids = gameids[:n_train_valid]
+def get_train_valid_test_gameids(opts):
+    try:
+        with open("train_gameids.txt") as f:
+            train_gameids = f.read().split()
 
+        with open("valid_gameids.txt") as f:
+            valid_gameids = f.read().split()
+
+        with open("test_gameids.txt") as f:
+            test_gameids = f.read().split()
+
+    except FileNotFoundError:
+        print("No {train/valid/test}_gameids.txt files found. Generating new ones.")
+
+        gameids = list(set([np_f.split("_")[0] for np_f in os.listdir(GAMES_DIR)]))
+        gameids.sort()
+        np.random.seed(SEED)
+        np.random.shuffle(gameids)
+        n_train_valid = int(opts["train"]["train_valid_prop"] * len(gameids))
+        n_train = int(opts["train"]["train_prop"] * n_train_valid)
+        train_valid_gameids = gameids[:n_train_valid]
+
+        train_gameids = train_valid_gameids[:n_train]
+        valid_gameids = train_valid_gameids[n_train:]
+        test_gameids = gameids[n_train_valid:]
+        train_valid_test_gameids = {
+            "train": train_gameids,
+            "valid": valid_gameids,
+            "test": test_gameids,
+        }
+        for (train_valid_test, gameids) in train_valid_test_gameids.items():
+            with open(f"{train_valid_test}_gameids.txt", "w") as f:
+                for gameid in gameids:
+                    f.write(f"{gameid}\n")
+
+    np.random.seed(SEED)
+
+    return (train_gameids, valid_gameids, test_gameids)
+
+
+def init_datasets(opts):
     baller2vec_config = pickle.load(open(f"{DATA_DIR}/baller2vec_config.pydict", "rb"))
     n_player_ids = len(baller2vec_config["player_idx2props"])
     filtered_player_idxs = set()
@@ -38,9 +76,10 @@ def init_datasets(opts):
         if player_props["playing_time"] < opts["train"]["min_playing_time"]:
             filtered_player_idxs.add(player_idx)
 
+    (train_gameids, valid_gameids, test_gameids) = get_train_valid_test_gameids(opts)
+
     dataset_config = opts["dataset"]
-    n_train = int(opts["train"]["train_prop"] * len(train_valid_gameids))
-    dataset_config["gameids"] = train_valid_gameids[:n_train]
+    dataset_config["gameids"] = train_gameids
     dataset_config["N"] = opts["train"]["train_samples_per_epoch"]
     dataset_config["starts"] = []
     dataset_config["mode"] = "train"
@@ -54,9 +93,8 @@ def init_datasets(opts):
         worker_init_fn=worker_init_fn,
     )
 
-    valid_gameids = train_valid_gameids[n_train:]
     N = opts["train"]["valid_samples"]
-    samps_per_gameid = N // len(valid_gameids)
+    samps_per_gameid = int(np.ceil(N / len(valid_gameids)))
     starts = []
     for gameid in valid_gameids:
         y = np.load(f"{GAMES_DIR}/{gameid}_y.npy")
@@ -75,16 +113,15 @@ def init_datasets(opts):
         num_workers=opts["train"]["workers"],
     )
 
-    test_gamieds = gameids[n_train_valid:]
-    samps_per_gameid = N // len(test_gamieds)
+    samps_per_gameid = int(np.ceil(N / len(test_gameids)))
     starts = []
-    for gameid in test_gamieds:
+    for gameid in test_gameids:
         y = np.load(f"{GAMES_DIR}/{gameid}_y.npy")
         max_start = len(y) - train_dataset.chunk_size
         gaps = max_start // samps_per_gameid
         starts.append(gaps * np.arange(samps_per_gameid))
 
-    dataset_config["gameids"] = np.repeat(test_gamieds, samps_per_gameid)
+    dataset_config["gameids"] = np.repeat(test_gameids, samps_per_gameid)
     dataset_config["N"] = len(dataset_config["gameids"])
     dataset_config["starts"] = np.concatenate(starts)
     dataset_config["mode"] = "test"
@@ -140,6 +177,7 @@ def get_preds_labels(tensors):
         if task == "player_traj":
             labels = player_trajs.to(device)
             preds = model(tensors)["player"][:n_player_trajs]
+
         else:
             if task == "ball_loc":
                 labels = tensors["ball_locs"].flatten().to(device)
@@ -167,120 +205,7 @@ def get_preds_labels(tensors):
     return (preds, labels)
 
 
-def train_model(optimizer):
-    best_train_loss = float("inf")
-    best_valid_loss = float("inf")
-    test_loss_best_valid = float("inf")
-    total_train_loss = None
-    no_improvement = 0
-    for epoch in range(500):
-        print(f"\nepoch: {epoch}", flush=True)
-
-        model.eval()
-        total_valid_loss = 0.0
-        with torch.no_grad():
-            n_valid = 0
-            for valid_tensors in valid_loader:
-                # Skip bad sequences.
-                if len(valid_tensors["player_idxs"]) < model.seq_len:
-                    continue
-
-                (preds, labels) = get_preds_labels(valid_tensors)
-                loss = criterion(preds, labels)
-                total_valid_loss += loss.item()
-                n_valid += 1
-
-            probs = torch.softmax(preds, dim=1)
-            print(probs.max(1), flush=True)
-            print(labels, flush=True)
-
-            total_valid_loss /= n_valid
-
-        if total_valid_loss < best_valid_loss:
-            best_valid_loss = total_valid_loss
-            torch.save(optimizer.state_dict(), f"{JOB_DIR}/optimizer.pth")
-            torch.save(model.state_dict(), f"{JOB_DIR}/best_params.pth")
-
-            test_loss_best_valid = 0.0
-            with torch.no_grad():
-                n_test = 0
-                for test_tensors in test_loader:
-                    # Skip bad sequences.
-                    if len(test_tensors["player_idxs"]) < model.seq_len:
-                        continue
-
-                    (preds, labels) = get_preds_labels(test_tensors)
-                    loss = criterion(preds, labels)
-                    test_loss_best_valid += loss.item()
-                    n_test += 1
-
-            test_loss_best_valid /= n_test
-
-        elif ((task == "event") or (task == "score")) and (opts["train"]["prev_model"]):
-            no_improvement += 1
-            if no_improvement == opts["train"]["patience"]:
-                train_params = [params for params in model.parameters()]
-                optimizer = optim.Adam(train_params, lr=opts["train"]["learning_rate"])
-
-        print(f"total_train_loss: {total_train_loss}")
-        print(f"best_train_loss: {best_train_loss}")
-        print(f"total_valid_loss: {total_valid_loss}")
-        print(f"best_valid_loss: {best_valid_loss}")
-        print(f"test_loss_best_valid: {test_loss_best_valid}")
-
-        model.train()
-        total_train_loss = 0.0
-        n_train = 0
-        for (train_idx, train_tensors) in enumerate(train_loader):
-            if train_idx % 1000 == 0:
-                print(train_idx, flush=True)
-
-            # Skip bad sequences.
-            if len(train_tensors["player_idxs"]) < model.seq_len:
-                continue
-
-            optimizer.zero_grad()
-            (preds, labels) = get_preds_labels(train_tensors)
-            loss = criterion(preds, labels)
-            total_train_loss += loss.item()
-            loss.backward()
-            optimizer.step()
-            n_train += 1
-
-        total_train_loss /= n_train
-        if total_train_loss < best_train_loss:
-            best_train_loss = total_train_loss
-
-
-if __name__ == "__main__":
-    JOB = sys.argv[1]
-    JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
-
-    try:
-        os.environ["CUDA_VISIBLE_DEVICES"] = sys.argv[2]
-    except IndexError:
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
-    opts = yaml.safe_load(open(f"{JOB_DIR}/{JOB}.yaml"))
-    task = opts["train"]["task"]
-
-    # Initialize datasets.
-    (
-        train_dataset,
-        train_loader,
-        valid_dataset,
-        valid_loader,
-        test_dataset,
-        test_loader,
-    ) = init_datasets(opts)
-
-    # Initialize model.
-    device = torch.device("cuda:0")
-    model = init_model(opts, train_dataset).to(device)
-    print(model)
-    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Parameters: {n_params}")
-
+def train_model():
     # Initialize optimizer.
     if ((task == "event") or (task == "score")) and (opts["train"]["prev_model"]):
         old_job = opts["train"]["prev_model"]
@@ -305,4 +230,136 @@ if __name__ == "__main__":
     except FileNotFoundError:
         pass
 
-    train_model(optimizer)
+    best_train_loss = float("inf")
+    best_valid_loss = float("inf")
+    test_loss_best_valid = float("inf")
+    total_train_loss = None
+    no_improvement = 0
+    for epoch in range(650):
+        print(f"\nepoch: {epoch}", flush=True)
+
+        model.eval()
+        total_valid_loss = 0.0
+        with torch.no_grad():
+            n_valid = 0
+            for valid_tensors in valid_loader:
+                # Skip bad sequences.
+                if len(valid_tensors["player_idxs"]) < model.seq_len:
+                    continue
+
+                (preds, labels) = get_preds_labels(valid_tensors)
+                loss = criterion(preds, labels)
+                total_valid_loss += loss.item()
+                n_valid += 1
+
+            probs = torch.softmax(preds, dim=1)
+            (probs, preds) = probs.max(1)
+            print(probs.view(model.seq_len, model.n_players), flush=True)
+            print(preds.view(model.seq_len, model.n_players), flush=True)
+            print(labels.view(model.seq_len, model.n_players), flush=True)
+
+            total_valid_loss /= n_valid
+
+        if total_valid_loss < best_valid_loss:
+            best_valid_loss = total_valid_loss
+            no_improvement = 0
+            torch.save(optimizer.state_dict(), f"{JOB_DIR}/optimizer.pth")
+            torch.save(model.state_dict(), f"{JOB_DIR}/best_params.pth")
+
+            test_loss_best_valid = 0.0
+            with torch.no_grad():
+                n_test = 0
+                for test_tensors in test_loader:
+                    # Skip bad sequences.
+                    if len(test_tensors["player_idxs"]) < model.seq_len:
+                        continue
+
+                    (preds, labels) = get_preds_labels(test_tensors)
+                    loss = criterion(preds, labels)
+                    test_loss_best_valid += loss.item()
+                    n_test += 1
+
+            test_loss_best_valid /= n_test
+
+        elif no_improvement < patience:
+            no_improvement += 1
+            if no_improvement == patience:
+                if ((task == "event") or (task == "score")) and (
+                    opts["train"]["prev_model"]
+                ):
+                    print("Now training full model.")
+                    train_params = [params for params in model.parameters()]
+                    optimizer = optim.Adam(
+                        train_params, lr=opts["train"]["learning_rate"]
+                    )
+                else:
+                    print("Reducing learning rate.")
+                    for g in optimizer.param_groups:
+                        g["lr"] *= 0.1
+
+        print(f"total_train_loss: {total_train_loss}")
+        print(f"best_train_loss: {best_train_loss}")
+        print(f"total_valid_loss: {total_valid_loss}")
+        print(f"best_valid_loss: {best_valid_loss}")
+        print(f"test_loss_best_valid: {test_loss_best_valid}")
+
+        model.train()
+        total_train_loss = 0.0
+        n_train = 0
+        start_time = time.time()
+        for (train_idx, train_tensors) in enumerate(train_loader):
+            if train_idx % 1000 == 0:
+                print(train_idx, flush=True)
+
+            # Skip bad sequences.
+            if len(train_tensors["player_idxs"]) < model.seq_len:
+                continue
+
+            optimizer.zero_grad()
+            (preds, labels) = get_preds_labels(train_tensors)
+            loss = criterion(preds, labels)
+            total_train_loss += loss.item()
+            loss.backward()
+            optimizer.step()
+            n_train += 1
+
+        epoch_time = time.time() - start_time
+
+        total_train_loss /= n_train
+        if total_train_loss < best_train_loss:
+            best_train_loss = total_train_loss
+
+        print(f"epoch_time: {epoch_time:.2f}", flush=True)
+
+
+if __name__ == "__main__":
+    JOB = sys.argv[1]
+    JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
+
+    try:
+        os.environ["CUDA_VISIBLE_DEVICES"] = sys.argv[2]
+    except IndexError:
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+    opts = yaml.safe_load(open(f"{JOB_DIR}/{JOB}.yaml"))
+    task = opts["train"]["task"]
+    patience = opts["train"]["patience"]
+
+    # Initialize datasets.
+    (
+        train_dataset,
+        train_loader,
+        valid_dataset,
+        valid_loader,
+        test_dataset,
+        test_loader,
+    ) = init_datasets(opts)
+
+    # Initialize model.
+    device = torch.device("cuda:0")
+    model = init_model(opts, train_dataset).to(device)
+    print(model)
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Parameters: {n_params}")
+
+    train_model()

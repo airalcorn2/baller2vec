@@ -30,7 +30,7 @@ class SaveOutput:
 
 
 def single_frame_loss():
-    JOB = "20210124114528"
+    JOB = "20210330143718"
     JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
 
     device = torch.device("cuda:0")
@@ -76,7 +76,7 @@ def single_frame_loss():
 
 
 def naive_player_test_set_perplexity():
-    JOB = "20210124114528"
+    JOB = "20210330143718"
     JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
 
     device = torch.device("cuda:0")
@@ -109,7 +109,7 @@ def naive_player_test_set_perplexity():
 
         wall_clock_diffs = np.diff(seq_data[:, -1]) / 1000
 
-        keep_diffs = wall_clock_diffs <= 1.5 * skip_secs
+        keep_diffs = wall_clock_diffs <= 1.2 * skip_secs
         player_x_diffs = player_x_diffs[keep_diffs].flatten()
         player_y_diffs = player_y_diffs[keep_diffs].flatten()
 
@@ -121,7 +121,7 @@ def naive_player_test_set_perplexity():
     all_player_trajs = np.concatenate(all_player_trajs)
     (unique, counts) = np.unique(all_player_trajs, return_counts=True)
     d_counts = dict(zip(unique, counts))
-    probs = np.zeros(train_dataset.ball_traj_n ** 3)
+    probs = np.zeros(train_dataset.player_traj_n ** 2)
     for (traj, count) in d_counts.items():
         probs[traj] = count
 
@@ -144,12 +144,12 @@ def naive_player_test_set_perplexity():
             test_loss -= np.log(probs[labels]).mean()
             n_test += 1
 
-    print(test_loss)
+    print(test_loss / n_test)
     print(np.exp(test_loss / n_test))
 
 
 def naive_ball_test_set_perplexity():
-    JOB = "20210124114950"
+    JOB = "20210406143658"
     JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
 
     device = torch.device("cuda:0")
@@ -227,7 +227,7 @@ def naive_ball_test_set_perplexity():
             test_loss -= np.log(probs[labels]).mean()
             n_test += 1
 
-    print(test_loss)
+    print(test_loss / n_test)
     print(np.exp(test_loss / n_test))
 
 
@@ -290,7 +290,7 @@ def get_player_idx(name, player_idx2props):
 
 
 def get_nearest_neighbors():
-    JOB = "20210124114950"
+    JOB = "20210406143658"
     JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
 
     # Load model.
@@ -497,7 +497,7 @@ def plot_umap():
     plt.show()
 
 
-def add_grid(img, steps):
+def add_grid(img, steps, highlight_center=True):
     # See: https://randomgeekery.org/post/2017/11/drawing-grids-with-python-and-pillow/.
     fill = (128, 128, 128)
 
@@ -517,19 +517,23 @@ def add_grid(img, steps):
         line = ((x_start, y), (x_end, y))
         draw.line(line, fill=fill)
 
-    mid_color = (0, 0, 255)
-    half_steps = steps // 2
-    (mid_start, mid_end) = (half_steps * step_size, half_steps * step_size + step_size)
-    draw.line(((mid_start, mid_start), (mid_end, mid_start)), fill=mid_color)
-    draw.line(((mid_start, mid_end), (mid_end, mid_end)), fill=mid_color)
-    draw.line(((mid_start, mid_start), (mid_start, mid_end)), fill=mid_color)
-    draw.line(((mid_end, mid_start), (mid_end, mid_end)), fill=mid_color)
+    if highlight_center:
+        mid_color = (0, 0, 255)
+        half_steps = steps // 2
+        (mid_start, mid_end) = (
+            half_steps * step_size,
+            half_steps * step_size + step_size,
+        )
+        draw.line(((mid_start, mid_start), (mid_end, mid_start)), fill=mid_color)
+        draw.line(((mid_start, mid_end), (mid_end, mid_end)), fill=mid_color)
+        draw.line(((mid_start, mid_start), (mid_start, mid_end)), fill=mid_color)
+        draw.line(((mid_end, mid_start), (mid_end, mid_end)), fill=mid_color)
 
     del draw
 
 
 def plot_traj_preds():
-    JOB = "20210124114528"
+    JOB = "20210330143718"
     JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
 
     # Load model.
@@ -551,7 +555,7 @@ def plot_traj_preds():
     vert_buffer = 10
     pt_scale = 1.4
     scale = 8
-    pred_player_idx = 5
+    pred_player_idx = 7
 
     home_dir = os.path.expanduser("~")
     os.makedirs(f"{home_dir}/test", exist_ok=True)
@@ -589,6 +593,11 @@ def plot_traj_preds():
                 markers.append("s")
             else:
                 markers.append("^")
+
+        tensors["player_xs"] = torch.clamp(tensors["player_xs"], 0, COURT_LENGTH)
+        tensors["player_ys"] = torch.clamp(tensors["player_ys"], 0, COURT_WIDTH)
+        tensors["ball_xs"] = torch.clamp(tensors["ball_xs"], 0, COURT_LENGTH)
+        tensors["ball_ys"] = torch.clamp(tensors["ball_ys"], 0, COURT_WIDTH)
 
         for time_step in range(len(tensors["player_idxs"])):
             ax.imshow(court, zorder=0, extent=[X_MIN, X_MAX - DIFF, Y_MAX, Y_MIN])
@@ -675,12 +684,13 @@ def plot_traj_preds():
 
 
 def plot_generated_trajectories():
-    JOB = "20210124114528"
+    JOB = "20210330143718"
     JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
 
     # Load model.
     opts = yaml.safe_load(open(f"{JOB_DIR}/{JOB}.yaml"))
     (train_dataset, _, _, _, test_dataset, _) = init_datasets(opts)
+    opts["model"]["mask_type"] = "ind"
     model = init_model(opts, train_dataset)
     model.load_state_dict(torch.load(f"{JOB_DIR}/best_params.pth"))
     model.eval()
@@ -702,6 +712,7 @@ def plot_generated_trajectories():
     (fig, ax) = plt.subplots(figsize=(width, height))
 
     saved = 0
+    torch.manual_seed(2010)
     np.random.seed(2010)
     while saved < 20:
         test_idx = np.random.choice(cand_test_idxs)
@@ -803,7 +814,7 @@ def plot_generated_trajectories():
 
 
 def plot_attn():
-    JOB = "20210124114950"
+    JOB = "20210406143658"
     JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
 
     # Load model.
@@ -942,7 +953,7 @@ def plot_attn():
 
 
 def plot_attn_through_time():
-    JOB = "20210124114950"
+    JOB = "20210406143658"
     JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
 
     # Load model.
@@ -1074,7 +1085,7 @@ def plot_attn_through_time():
 
 
 def plot_specific_attn_through_time():
-    JOB = "20210124114950"
+    JOB = "20210406143658"
     JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
 
     # Load model.
@@ -1233,8 +1244,8 @@ def get_start_idx_from_time(X, period, period_time):
     return np.argwhere((period_times > period_time) & (periods == period)).min()
 
 
-def plot_ball_traj_preds_specific_game():
-    JOB = "20210124114950"
+def plot_attn_through_time_specific_game():
+    JOB = "20210406143658"
     JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
 
     # Load model.
@@ -1373,3 +1384,54 @@ def plot_ball_traj_preds_specific_game():
 
     shutil.make_archive(f"{home_dir}/test", "zip", f"{home_dir}/test")
     shutil.rmtree(f"{home_dir}/test")
+
+
+def test_random_players():
+    JOB = "20210330143718"
+    JOB_DIR = f"{EXPERIMENTS_DIR}/{JOB}"
+
+    device = torch.device("cuda:0")
+
+    # Load model.
+    opts = yaml.safe_load(open(f"{JOB_DIR}/{JOB}.yaml"))
+    (
+        train_dataset,
+        train_loader,
+        valid_dataset,
+        valid_loader,
+        test_dataset,
+        test_loader,
+    ) = init_datasets(opts)
+    model = init_model(opts, train_dataset)
+    model.load_state_dict(torch.load(f"{JOB_DIR}/best_params.pth"))
+    model = model.to(device)
+    model.eval()
+
+    criterion = nn.CrossEntropyLoss()
+
+    test_loss_right = 0.0
+    test_loss_random = 0.0
+    n_test = 0
+    np.random.seed(2010)
+    with torch.no_grad():
+        for test_tensors in test_loader:
+            # Skip bad sequences.
+            if len(test_tensors["player_idxs"]) < model.seq_len:
+                continue
+
+            player_trajs = test_tensors["player_trajs"].flatten()
+            n_player_trajs = len(player_trajs)
+            labels = player_trajs.to(device)
+
+            preds = model(test_tensors)["player"][:n_player_trajs]
+            test_loss_right += criterion(preds, labels).item()
+
+            rand_players = np.random.choice(np.arange(450), 10, False)
+            test_tensors["player_idxs"][:] = torch.LongTensor(rand_players.astype(int))
+            preds = model(test_tensors)["player"][:n_player_trajs]
+            test_loss_random += criterion(preds, labels).item()
+
+            n_test += 1
+
+    print(test_loss_right / n_test)
+    print(test_loss_random / n_test)
