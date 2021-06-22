@@ -16,7 +16,6 @@ This is the repository for the paper:
 |:--:|
 | Further, nearest neighbors in <code>baller2vec</code>'s embedding space are plausible doppelgängers. Credit for the images: [Erik Drost](https://en.wikipedia.org/wiki/Russell_Westbrook#/media/File:Russell_Westbrook_shoots_against_Cavs_%28cropped%29.jpg), [Keith Allison](https://en.wikipedia.org/wiki/Pau_Gasol#/media/File:Pau_Gasol_boxout.jpg), [Jose Garcia](https://en.wikipedia.org/wiki/Kawhi_Leonard#/media/File:Kawhi_Leonard_Dunk_cropped.jpg), [Keith Allison](https://en.wikipedia.org/wiki/Derrick_Rose#/media/File:Derrick_Rose_2.jpg), [Verse Photography](https://en.wikipedia.org/wiki/Marc_Gasol#/media/File:Marc_Gasol_20131118_Clippers_v_Grizzles_%28cropped%29.jpg), and [Joe Glorioso](https://en.wikipedia.org/wiki/Jimmy_Butler#/media/File:Jimmy_Butler_%28cropped%29.jpg). |
 
-
 | <img src="pass.gif" width="400"> |
 |:--:|
 | Additionally, several attention heads in <code>baller2vec</code> appear to perform different basketball-relevant functions, such as anticipating passes. Code to generate the GIF was adapted from [@linouk23's NBA Player Movement's repository](https://github.com/linouk23/NBA-Player-Movements). |
@@ -123,7 +122,7 @@ There should be 1,262 NumPy arrays (corresponding to 631 X/y pairs) when finishe
 
 ### Animating a sequence
 
-1) If you don't have a display hooked up to your GPU server, you'll need to first clone the repository to your local machine and retrieve certain files from the remote server:
+1) If you don't have a display hooked up to your GPU machine, you'll need to first clone the repository to your local machine and retrieve certain files from the remote server:
 
 ```bash
 # From your local machine.
