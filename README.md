@@ -183,7 +183,7 @@ JOB=$(date +%Y%m%d%H%M%S)
 
 # Training options.
 echo "train:" >> ${JOB}.yaml
-task=ball_traj  # ball_traj, ball_loc, event, player_traj, score, or seq2seq.
+task=ball_traj  # "ball_traj" or "player_traj".
 echo "  task: ${task}" >> ${JOB}.yaml
 echo "  min_playing_time: 0" >> ${JOB}.yaml  # 0/13314/39917/1.0e+6 --> 100%/75%/50%/0%.
 echo "  train_valid_prop: 0.95" >> ${JOB}.yaml
