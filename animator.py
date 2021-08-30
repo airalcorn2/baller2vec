@@ -138,7 +138,7 @@ class Game:
                     fontweight="bold",
                 )
             )
-            if circle_idx < 5:
+            if self.player_hoop_sides[start, circle_idx]:
                 team_a_players.append(
                     self.player_idx2props[player_idx]["name"] + f": {initials}"
                 )
