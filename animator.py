@@ -171,7 +171,7 @@ class Game:
         for circle in player_circles:
             ax.add_patch(circle)
 
-        ball_circle = plt.Circle((0, 0), PLAYER_CIRCLE_SIZE, color="#ff8c00")
+        ball_circle = plt.Circle((0, 0), PLAYER_CIRCLE_SIZE, color=BALL_COLOR)
         ax.add_patch(ball_circle)
 
         anim = animation.FuncAnimation(
